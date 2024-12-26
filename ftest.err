@@ -1,0 +1,4 @@
+/scratch/ssdan/cuffless_bp/lib/foo.py:25: PerformanceWarning: Determining the column names of a LazyFrame requires resolving its schema, which is a potentially expensive operation. Use `LazyFrame.collect_schema().names()` to get the column names without this warning.
+  print(subset.columns)
+slurmstepd: error: Detected 1 oom_kill event in StepId=87753.0. Some of the step tasks have been OOM Killed.
+srun: error: gpunode4: task 0: Out Of Memory
