@@ -91,67 +91,107 @@ class DataLoader:
         """Reset the offset to start from beginning"""
         self.offset = 0
 
-# Example Processor implementations
 class ColumnAdder(Processor):
-    def __init__(self, column: str, value: Any):
-        self.column = column
-        self.value = value
-    
-    def process(self, batch: pl.DataFrame) -> pl.DataFrame:
-        return batch.with_columns(
-            pl.lit(self.value).alias(self.column)
-        )
-
-class ColumnReplacer(Processor):
     def __init__(self, 
                  target_column: str, 
                  source_columns: list[str], 
-                 transform_func: callable):
+                 transform_func: callable,
+                 output_type: str = "numeric"):
+        """
+        Initialize ColumnAdder with target column, source columns and transform function
+        
+        Args:
+            target_column: Name of the new column to be added
+            source_columns: List of source column names to be used in transformation
+            transform_func: Function that takes values from source columns and returns new value
+            output_type: Type of output ("numeric" or "array")
+        """
         self.target_column = target_column
         self.source_columns = source_columns
         self.transform_func = transform_func
+        self.output_type = output_type
     
     def process(self, batch: pl.DataFrame) -> pl.DataFrame:
-        # Get required columns as numpy arrays
-        arrays = [
-            batch[col].to_numpy() 
-            for col in self.source_columns
-        ]
+        """
+        Process a batch by adding new column based on transformation of source columns
         
-        # Apply transformation
-        new_values = self.transform_func(*arrays)
+        Args:
+            batch: Input DataFrame batch
+            
+        Returns:
+            DataFrame with new column added
+        """
+        # Extract source columns
+        source_data = [batch[col] for col in self.source_columns]
         
-        # Replace column
-        return batch.with_columns(
-            pl.Series(name=self.target_column, values=new_values)
-        )
+        # Apply transformation function
+        new_column = self.transform_func(*source_data)
+        
+        if self.output_type == "array":
+            # For array outputs, we need to handle each row separately
+            # and store the result as a list of arrays
+            return batch.with_columns([
+                pl.Series(
+                    name=self.target_column,
+                    values=[arr for arr in new_column]
+                )
+            ])
+        else:
+            # For numeric outputs, we can directly create a series
+            return batch.with_columns([
+                pl.Series(name=self.target_column, values=new_column)
+            ])
+
 
 if __name__ == '__main__':
     # Initialize loader
     loader = DataLoader("dataset/Train_Processed.parquet")
 
-    # Print statistics
-    print("Means:", loader.means)
-    print("Variances:", loader.variances)
-
-    # Example 1: Simple batch iteration
-    for batch in loader.get_batch(batch_size=4000):
-        print(f"Got batch of shape: {batch.shape}")
-
-    # Example 2: Using a processor to add a column
-    adder = ColumnAdder("new_col", 1.0)
-    for batch in loader.get_batch(batch_size=32, processor=adder):
-        print(f"Got processed batch with new column: {batch.columns}")
-
-    # Example 3: Using a processor to replace a column
-    def combine_sbp_dbp(sbp, dbp):
+    # Test 1: Average of SegSBP and SegDBP
+    def calculate_avg(sbp, dbp):
         return (sbp + dbp) / 2
 
-    replacer = ColumnReplacer(
-        target_column="MeanBP",
+    avg_processor = ColumnAdder(
+        target_column="AvgBP",
         source_columns=["SegSBP", "SegDBP"],
-        transform_func=combine_sbp_dbp
+        transform_func=calculate_avg,
+        output_type="numeric"
     )
 
-for batch in loader.get_batch(batch_size=32, processor=replacer):
-    print(f"Got batch with mean BP: {batch['MeanBP'].mean()}")
+    # Test 2: Combine PPG_F and ABP_F
+    def combine_signals(ppg_f, abp_f):
+        # Process each row individually
+        combined = []
+        for p, a in zip(ppg_f, abp_f):
+            combined.append(np.vstack([p, a]).tolist())
+        return combined
+
+    signal_processor = ColumnAdder(
+        target_column="CombinedSignals",
+        source_columns=["PPG_F", "ABP_F"],
+        transform_func=combine_signals,
+        output_type="array"
+    )
+
+    # Process first batch with each processor
+    for batch in loader.get_batch(batch_size=32, processor=avg_processor):
+        print("\nTest 1 Results:")
+        print("New column 'AvgBP' added:", "AvgBP" in batch.columns)
+        print(batch.shape)
+        print(batch.columns)
+        print(batch.head())
+        print("Sample values:")
+        print(batch.select(["SegSBP", "SegDBP", "AvgBP"]).head(3))
+        break
+
+    # Reset loader
+    loader.reset()
+
+    for batch in loader.get_batch(batch_size=32, processor=signal_processor):
+        print("\nTest 2 Results:")
+        print("New column 'CombinedSignals' added:", "CombinedSignals" in batch.columns)
+        print("Sample combined signal shape:", batch["CombinedSignals"][0].shape)
+        print(batch.shape)
+        print(batch.columns)
+        print(batch.head())
+        break
