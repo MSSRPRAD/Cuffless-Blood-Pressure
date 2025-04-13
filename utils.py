@@ -34,18 +34,19 @@ def prepare_parquet_from_infofile_inplace(path: str):
                     key = k
             subj_seg_indices = [segidx_as_float(np.array(f[it])) for it in f[key]['Subj_SegIDX'][0]]
             sids_raw = [sid_asstr(np.array(f[it])) for it in f[key]['Subj_Name'][0]]
+            source = [sid_asstr(np.array(f[it])) for it in f[key]['Source'][0]]
             print(type(subj_seg_indices[0]), type(sids_raw[0]))
             print(subj_seg_indices[0], sids_raw[0])
             print(len(subj_seg_indices), len(sids_raw)) 
             print("Reached Here!")
             df = pl.DataFrame({
                 'combined': sids_raw,
-                'Subj_SegIDX': subj_seg_indices
+                'Subj_SegIDX': subj_seg_indices,
+                'Source': source
             })
             df = df.with_columns([
               pl.col('combined').str.split('_').list.get(0).alias('name'),
-              pl.col('combined').str.split('_').list.get(1).alias('flag')
-])
+              pl.col('combined').str.split('_').list.get(1).alias('flag')])
             df = df.drop('combined')
             df.write_parquet(path.split('.')[0] + '.parquet')
     except Exception as e:
@@ -129,11 +130,21 @@ def df_from_segfile(path):
         )
     return df
 
+
+import tempfile
+
 def process_single_file(file_path):
     try:
         output_file = file_path.replace('.mat', '.parquet')
+        lock_file = output_file + '.lock'
+
+        # Attempt to create a lock file atomically
+        fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+
         if os.path.exists(output_file):
             print(f"Skipping {file_path}, corresponding Parquet file already exists.")
+            os.remove(lock_file)
             return
 
         print(f"Processing file: {file_path}")
@@ -141,11 +152,21 @@ def process_single_file(file_path):
         if (df is not None) and (df.shape[0]*df.shape[1] != 0):
             df.write_parquet(output_file)
             print(f"Successfully wrote Parquet file: {output_file}")
-            gc.collect()
+        else:
+            print(f"Empty or invalid dataframe from: {file_path}")
+
+    except FileExistsError:
+        # Another process is handling this file
+        print(f"Skipping {file_path}, lock already exists.")
+        return
     except Exception as e:
         print(f"Error processing file {file_path}: {str(e)}")
     finally:
+        # Clean up lock file
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
         gc.collect()
+
 
 def create_parquet_from_segmentfiles_parallel(directory: str):
     """
@@ -231,10 +252,10 @@ signal.signal(signal.SIGINT, handle_sigint)
 
 
 if __name__ == "__main__":
-    #prepare_parquet_indir("Supplementary_Info_Files")
+    prepare_parquet_indir("Supplementary_Info_Files")
     prepare_parquet_indir("Info_Files")
-    #create_parquet_from_segmentfiles_parallel("Segment_Files/PulseDB_MIMIC")
-    #create_parquet_from_segmentfiles_parallel("Segment_Files/PulseDB_Vital")
+    #create_parquet_from_segmentfiles_parallel("./PulseDB_MIMIC")
+    #create_parquet_from_segmentfiles_parallel("./PulseDB_Vital")
     #process_single_file("Segment_Files/PulseDB_MIMIC/p059845.mat")
     #process_single_file("Segment_Files/PulseDB_MIMIC/p068919.mat")
     #visit_parquets("Segment_Files")

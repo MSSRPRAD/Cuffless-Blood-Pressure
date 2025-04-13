@@ -3,7 +3,7 @@
 #SBATCH --nodes 1
 #SBATCH --ntasks-per-node 1
 #SBATCH --gres=gpu:1
-#SBATCH --partition=gpu_a100_8
+#SBATCH --partition=gpu_v100_2
 #SBATCH --mem 200G
 #SBATCH -t 2-00:00
 #SBATCH -o test.out
@@ -18,8 +18,9 @@
 #octave
 source .venv/bin/activate
 which python3
-srun python3 utils.py
 
+#srun python3 utils.py
+srun python3 prepare_dset.py
 # Activate Environment
 #source
 #echo "setting up conda....."

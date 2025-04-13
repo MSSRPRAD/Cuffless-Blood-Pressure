@@ -19,38 +19,57 @@ def process_info_file(info_file_path, output_dir, is_supplementary=False):
     # Query with COPY command
     query = f"""
     SET enable_progress_bar = true;
-    SET memory_limit = '100GB';
+    SET memory_limit = '200GB';
     COPY (
         WITH TargetRows AS (
             SELECT 
                 S.SubjectID,
                 S.SegmentID,
                 S.CaseID,
-                ROW_NUMBER() OVER (PARTITION BY S.SubjectID ORDER BY S.SegmentID) as RowNum
-            FROM read_parquet('./Segment_Files/*/*parquet') S
+                CASE 
+                    WHEN S.filename LIKE '%MIMIC%' THEN 'MIMIC'
+                    WHEN S.filename LIKE '%Vital%' THEN 'VitalDB'
+                END AS Source,
+                ROW_NUMBER() OVER (PARTITION BY S.SubjectID, 
+                                    Source
+                                  ORDER BY S.SegmentID) as RowNum
+            FROM read_parquet('./PulseDB_*/*parquet', union_by_name = true, filename = true) S
         ),
         ValidSegments AS (
             SELECT 
                 B.name as SubjectID,
-                B.Subj_SegIDX as RequiredRowNum
+                B.Subj_SegIDX as RequiredRowNum,
+                B.Source as Source
             FROM read_parquet('{info_file_path}') B
         ),
         MatchingSegments AS (
             SELECT 
                 T.SubjectID,
                 T.SegmentID,
-                T.CaseID
+                T.CaseID,
+                T.Source
             FROM TargetRows T
             INNER JOIN ValidSegments V
                 ON T.SubjectID = V.SubjectID 
                 AND T.RowNum = V.RequiredRowNum
+                AND T.Source = V.Source
         )
-        SELECT D.*
-        FROM read_parquet('./Segment_Files/*/*parquet') D
+        SELECT D.*,
+        CASE
+            WHEN D.filename LIKE '%MIMIC%' THEN 'MIMIC'
+            WHEN D.filename LIKE '%Vital%' THEN 'VitalDB'
+            ELSE 'Unknown'
+        END AS Source
+        FROM read_parquet('./PulseDB_*/*parquet', union_by_name = true, filename = true) D
         INNER JOIN MatchingSegments M
             ON D.SubjectID = M.SubjectID 
             AND D.SegmentID = M.SegmentID
             AND D.CaseID = M.CaseID
+            AND CASE
+                WHEN D.filename LIKE '%MIMIC%' THEN 'MIMIC'
+                WHEN D.filename LIKE '%Vital%' THEN 'VitalDB'
+                ELSE 'Unknown'
+            END = M.Source
     ) TO '{output_path}' (FORMAT 'parquet', COMPRESSION 'SNAPPY');
     """
     
